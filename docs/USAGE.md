@@ -41,17 +41,19 @@ This creates:
 tmux new -s work
 
 # Spawn an agent
-spawn-agent auth "implement oauth login"
+sf-spawn-agent auth "implement oauth login"
 
 # Check progress
-progress auth
+sf-progress auth
 
 # See code changes
-changes auth
+sf-changes auth
 
 # When done
-cleanup auth
+sf-cleanup auth
 ```
+
+Short aliases also work: `sa`, `st`, `cu`, `bs`, `sfs`.
 
 ---
 
@@ -60,7 +62,7 @@ cleanup auth
 The interactive wizard helps you create well-structured agent specs:
 
 ```bash
-build-specs
+sf-build-specs
 ```
 
 It guides you through:
@@ -84,23 +86,23 @@ It guides you through:
 
 ```bash
 # Spawn all agents in spec
-spawn-from-spec specs/my-spec.yaml
+sf-spawn-from-spec specs/my-spec.yaml
 
 # Spawn only one agent
-spawn-from-spec specs/my-spec.yaml --only auth
+sf-spawn-from-spec specs/my-spec.yaml --only auth
 ```
 
 ### Quick Spawn (One-off)
 
 ```bash
 # Basic
-spawn-agent auth "implement oauth login"
+sf-spawn-agent auth "implement oauth login"
 
 # With model
-spawn-agent api "add rate limiting" --model haiku
+sf-spawn-agent api "add rate limiting" --model haiku
 
 # With specific tools
-spawn-agent fix "fix the bug" --tools "Read,Glob,Grep,Edit"
+sf-spawn-agent fix "fix the bug" --tools "Read,Glob,Grep,Edit"
 ```
 
 ### Model Options
@@ -116,7 +118,7 @@ spawn-agent fix "fix the bug" --tools "Read,Glob,Grep,Edit"
 ### Status Overview
 
 ```bash
-status
+sf-status
 ```
 
 Shows all tmux windows and agent worktrees with change summary.
@@ -124,15 +126,15 @@ Shows all tmux windows and agent worktrees with change summary.
 ### Agent Output
 
 ```bash
-progress auth        # What is auth doing?
-progress auth 200    # Show more lines
+sf-progress auth        # What is auth doing?
+sf-progress auth 200    # Show more lines
 ```
 
 ### Code Changes
 
 ```bash
-changes              # All agents
-changes auth         # Specific agent
+sf-changes              # All agents
+sf-changes auth         # Specific agent
 ```
 
 Shows colored git diff of what agents changed.
@@ -144,17 +146,17 @@ Shows colored git diff of what agents changed.
 ### Generic Watcher
 
 ```bash
-spawn-watcher logs "tail -f /var/log/app.log"
+sf-spawn-watcher logs "tail -f /var/log/app.log"
 ```
 
 ### K8s Pod Logs
 
 ```bash
 # Specific pods
-watch-k8s api-pod-xxx worker-pod-xxx
+sf-watch-k8s api-pod-xxx worker-pod-xxx
 
 # By label
-K8S_NAMESPACE=prod watch-k8s-label app=api
+K8S_NAMESPACE=prod sf-watch-k8s-label app=api
 ```
 
 ---
@@ -162,8 +164,8 @@ K8S_NAMESPACE=prod watch-k8s-label app=api
 ## Cleanup
 
 ```bash
-cleanup auth         # Remove one agent
-cleanup-all          # Remove all agents
+sf-cleanup auth         # Remove one agent
+sf-cleanup-all          # Remove all agents
 ```
 
 This:
@@ -235,11 +237,11 @@ your-project/
 
 ## Tips
 
-1. **Start simple**: Try `spawn-agent` before `build-specs`
+1. **Start simple**: Try `sf-spawn-agent` before `sf-build-specs`
 2. **Use haiku for simple tasks**: Faster and cheaper
 3. **Be specific about scope**: Tell agents exactly which files to modify
-4. **Check changes before merging**: `changes` shows what agents did
-5. **Use collision detection**: `build-specs` prevents file conflicts
+4. **Check changes before merging**: `sf-changes` shows what agents did
+5. **Use collision detection**: `sf-build-specs` prevents file conflicts
 
 ---
 
@@ -261,11 +263,11 @@ tmux new -s work
 
 ```bash
 # Check what it's doing
-progress <name>
+sf-progress <name>
 
 # Kill and restart
-cleanup <name>
-spawn-agent <name> "task"
+sf-cleanup <name>
+sf-spawn-agent <name> "task"
 ```
 
 ### Worktree errors
