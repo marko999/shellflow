@@ -2,7 +2,7 @@
 # Shellflow - Install to Another Project
 #
 # Usage (from any repo):
-#   curl -fsSL https://raw.githubusercontent.com/youruser/shellflow/main/scripts/install-to-project.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/marko999/shellflow/main/scripts/install-to-project.sh | bash
 #   OR
 #   /path/to/shellflow/scripts/install-to-project.sh
 #   OR

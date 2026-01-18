@@ -2,10 +2,10 @@
 # Shellflow - One-Line Installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/shellflow/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/marko999/shellflow/main/install.sh | bash
 #
 # Or with a specific install location:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/shellflow/main/install.sh | bash -s -- --dir ~/.shellflow
+#   curl -fsSL https://raw.githubusercontent.com/marko999/shellflow/main/install.sh | bash -s -- --dir ~/.shellflow
 #
 # This script:
 #   1. Clones Shellflow to ~/.shellflow (or specified dir)
@@ -25,7 +25,7 @@ NC='\033[0m'
 
 # Default values
 SHELLFLOW_DIR="${HOME}/.shellflow"
-REPO_URL="https://github.com/YOUR_USERNAME/shellflow.git"
+REPO_URL="https://github.com/marko999/shellflow.git"
 SETUP_PROJECT=false
 PROJECT_DIR=""
 

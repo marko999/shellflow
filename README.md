@@ -54,13 +54,13 @@ Shellflow lets you:
 
 **One-liner (recommended):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/shellflow/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/marko999/shellflow/main/install.sh | bash
 source ~/.zshrc
 ```
 
 **Or clone manually:**
 ```bash
-git clone https://github.com/YOUR_USERNAME/shellflow.git ~/.shellflow
+git clone https://github.com/marko999/shellflow.git ~/.shellflow
 ~/.shellflow/scripts/setup.sh
 source ~/.zshrc
 ```
