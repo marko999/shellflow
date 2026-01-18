@@ -76,7 +76,18 @@ spawn-agent() {
 
   # Start agent in that window
   tmux send-keys -t "$name" "claude" Enter
-  sleep 2
+
+  # Wait for Claude to initialize (check for prompt)
+  local retries=0
+  while [ $retries -lt 10 ]; do
+    sleep 1
+    if tmux capture-pane -t "$name" -p 2>/dev/null | grep -qE "(❯|>|claude)"; then
+      break
+    fi
+    ((retries++))
+  done
+  sleep 1  # Extra buffer after prompt appears
+
   tmux send-keys -t "$name" "$task" Enter
 
   echo "✓ Agent '$name' spawned (window created in background)"
@@ -135,8 +146,25 @@ spawn-agents() {
     ((pane++))
   done
 
-  # Wait for claude to start, then send tasks
-  sleep 3
+  # Wait for Claude instances to initialize (check for prompts)
+  echo "  Waiting for Claude instances to initialize..."
+  local retries=0
+  while [ $retries -lt 15 ]; do
+    sleep 1
+    local ready=0
+    for i in $(seq 0 $((${#specs[@]} - 1))); do
+      if tmux capture-pane -t "agents.$i" -p 2>/dev/null | grep -qE "(❯|>|claude)"; then
+        ((ready++))
+      fi
+    done
+    if [ $ready -eq ${#specs[@]} ]; then
+      break
+    fi
+    ((retries++))
+  done
+  sleep 1  # Extra buffer
+
+  # Send tasks to each pane
   pane=0
   for spec in "${specs[@]}"; do
     local task="${spec#*:}"
@@ -415,7 +443,10 @@ _shellflow_windows() {
   _describe 'windows' windows
 }
 
-compdef _shellflow_windows check tell peek kill-window cleanup kw cu
+# Only set up completions if compdef is available (requires compinit)
+if type compdef &>/dev/null; then
+  compdef _shellflow_windows check tell peek kill-window cleanup kw cu
+fi
 
 # ============================================
 # STARTUP MESSAGE

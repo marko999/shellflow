@@ -73,9 +73,20 @@ Example: `/spawn-agent auth-service Implement OAuth2 login flow with JWT tokens`
    tmux send-keys -t "<name>" "claude" Enter
    ```
 
-7. **Wait 3 seconds, then send the prompt**:
+7. **Wait for Claude to initialize** (poll for the prompt to appear):
    ```bash
-   sleep 3
+   # Poll up to 10 times (1 second each) for Claude's prompt
+   for i in {1..10}; do
+     sleep 1
+     if tmux capture-pane -t "<name>" -p 2>/dev/null | grep -q "❯"; then
+       break
+     fi
+   done
+   sleep 1  # Extra buffer after prompt appears
+   ```
+
+8. **Send the task prompt**:
+   ```bash
    tmux send-keys -t "<name>" "$(cat /tmp/shellflow-<name>.prompt.md)" Enter
    ```
 
