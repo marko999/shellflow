@@ -77,16 +77,17 @@ spawn-agent() {
   # Start agent in that window
   tmux send-keys -t "$name" "claude" Enter
 
-  # Wait for Claude to initialize (check for prompt)
+  # Wait for Claude to initialize (check for the input prompt ❯)
   local retries=0
-  while [ $retries -lt 10 ]; do
+  while [ $retries -lt 15 ]; do
     sleep 1
-    if tmux capture-pane -t "$name" -p 2>/dev/null | grep -qE "(❯|>|claude)"; then
+    # Look for Claude's input prompt (❯) at the start of a line
+    if tmux capture-pane -t "$name" -p 2>/dev/null | grep -q "^❯"; then
       break
     fi
     ((retries++))
   done
-  sleep 1  # Extra buffer after prompt appears
+  sleep 2  # Extra buffer after prompt appears
 
   tmux send-keys -t "$name" "$task" Enter
 
@@ -146,14 +147,14 @@ spawn-agents() {
     ((pane++))
   done
 
-  # Wait for Claude instances to initialize (check for prompts)
+  # Wait for Claude instances to initialize (check for input prompt ❯)
   echo "  Waiting for Claude instances to initialize..."
   local retries=0
-  while [ $retries -lt 15 ]; do
+  while [ $retries -lt 20 ]; do
     sleep 1
     local ready=0
     for i in $(seq 0 $((${#specs[@]} - 1))); do
-      if tmux capture-pane -t "agents.$i" -p 2>/dev/null | grep -qE "(❯|>|claude)"; then
+      if tmux capture-pane -t "agents.$i" -p 2>/dev/null | grep -q "^❯"; then
         ((ready++))
       fi
     done
@@ -162,7 +163,7 @@ spawn-agents() {
     fi
     ((retries++))
   done
-  sleep 1  # Extra buffer
+  sleep 2  # Extra buffer
 
   # Send tasks to each pane
   pane=0
