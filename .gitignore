@@ -1,0 +1,26 @@
+# Worktrees directory (created during use)
+../worktrees/
+
+# Temporary files
+*.tmp
+*.log
+/tmp/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Environment
+.env
+.env.local
+
+# Claude Code
+.claude/settings.local.json

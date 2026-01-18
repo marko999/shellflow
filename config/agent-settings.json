@@ -1,0 +1,45 @@
+{
+  "$schema": "https://claude.ai/schemas/settings.json",
+  "description": "Settings for constrained worker agents - copy to worktree/.claude/settings.local.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent-filter.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "TodoWrite",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(npm test *)",
+      "Bash(npm run lint *)",
+      "Bash(cat *)",
+      "Bash(ls *)"
+    ],
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash(rm *)",
+      "Bash(mv *)",
+      "Bash(sudo *)"
+    ]
+  },
+  "env": {
+    "SHELLFLOW_MODE": "agent"
+  }
+}
