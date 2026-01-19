@@ -1,43 +1,36 @@
 # Shellflow
 
-A supervisor-worker architecture for running multiple AI agents in parallel using git worktrees, tmux, and Claude Code.
+Simple, non-interactive agent orchestration for Claude Code. Human is the supervisor.
 
 ## Overview
 
-Shellflow lets you:
-
-1. **Plan** with a high-capability AI (supervisor mode)
-2. **Spawn** multiple worker agents in isolated git worktrees
-3. **Monitor** their progress from your main conversation
-4. **Direct** agents with additional instructions
-5. **Verify** and **merge** their work with quality gates
+Shellflow lets you spawn multiple autonomous Claude agents that work in parallel on isolated git worktrees. You stay in control - no AI supervisor, just simple shell commands.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  SUPERVISOR (You + Claude Code)                             │
-│  ════════════════════════════════════════════════════════  │
+│  YOU (Human Supervisor)                                     │
+│  ═══════════════════════════════════════════════════════    │
 │                                                             │
-│  You: "Plan the auth refactor"                              │
-│  Claude: [plans, decomposes into tasks]                     │
+│  $ build-specs                    # Interactive wizard      │
+│  $ spawn-from-spec specs/auth.yaml  # Spawn from file      │
+│  $ spawn-agent api "add rate limiting" --model haiku       │
 │                                                             │
-│  You: /spawn-agent auth "Implement OAuth2"                  │
-│  You: /spawn-agent api "Add rate limiting"                  │
-│  You: /spawn-watcher pods "kubectl get pods -w"             │
+│  $ status                         # See all agents          │
+│  $ progress auth                  # See agent output        │
+│  $ changes                        # See all code changes    │
 │                                                             │
-│  You: /status                                               │
-│  Claude: [shows all agent progress]                         │
-│                                                             │
-│  You: /verify                                               │
-│  Claude: [runs tests, shows report, asks for merge approval]│
-│                                                             │
+│  $ cleanup auth                   # Done? Remove agent      │
 └─────────────────────────────────────────────────────────────┘
         │
-        │ controls
+        │ spawns
         ▼
 ┌───────┬───────┬───────┬───────┐
-│ auth  │  api  │ pods  │ logs  │
-│ agent │ agent │ watch │ watch │
+│ auth  │  api  │  db   │ k8s   │
+│ agent │ agent │ agent │ watch │
+│(haiku)│(sonnet)│(opus)│       │
 └───────┴───────┴───────┴───────┘
+  Each agent runs `claude -p "task" --allowedTools "..."`
+  in its own worktree, autonomously until done.
 ```
 
 ## Quick Start
@@ -48,11 +41,10 @@ Shellflow lets you:
 - Git
 - tmux (`brew install tmux`)
 - Claude Code CLI (`npm install -g @anthropic/claude-code`)
-- jq (`brew install jq`)
 
 ### Installation
 
-**One-liner (recommended):**
+**One-liner:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/marko999/shellflow/main/install.sh | bash
 source ~/.zshrc
@@ -65,239 +57,205 @@ git clone https://github.com/marko999/shellflow.git ~/.shellflow
 source ~/.zshrc
 ```
 
-**Set up a specific project:**
+## Usage
+
+### 1. Interactive Spec Builder (Recommended)
+
+The spec builder wizard guides you through creating agent specifications with collision detection:
+
 ```bash
-cd /path/to/your/project
-~/.shellflow/scripts/install-to-project.sh
+$ build-specs
+
+╔═══════════════════════════════════════════════════════════════╗
+║                    SHELLFLOW SPEC BUILDER                     ║
+╚═══════════════════════════════════════════════════════════════╝
+
+How many agents do you need? 2
+
+─────────────────────────────────────────────────────────────────
+AGENT 1 of 2
+─────────────────────────────────────────────────────────────────
+Name: auth
+What should this agent do? Implement OAuth2 login with JWT tokens
+Which files/directories will it modify?
+  > src/auth/
+  > src/middleware/auth.ts
+  >
+Which files should it NOT touch?
+  > src/api/*
+  >
+How do we verify it worked? npm test -- --grep auth
+Which model? [1=haiku, 2=sonnet, 3=opus]: 1
+
+─────────────────────────────────────────────────────────────────
+COLLISION CHECK
+─────────────────────────────────────────────────────────────────
+✓ auth: src/auth/, src/middleware/auth.ts
+✓ api: src/api/
+✓ No collisions detected
+
+Spec saved to: specs/2024-01-18-2230-auth-api.yaml
+Spawn these agents now? [y/N]: y
 ```
 
-See [docs/USAGE.md](docs/USAGE.md) for detailed installation options.
+### 2. Quick Agent Spawn
 
-### Basic Usage
+For simple one-off tasks:
 
 ```bash
-# Start tmux session
-tmux new -s shellflow
+# Basic
+spawn-agent auth "implement oauth login"
 
-# Enter supervisor mode
-claude
+# With model selection
+spawn-agent api "add rate limiting" --model haiku
 
-# Now you can:
-# - Plan with Claude
-# - Spawn agents: /spawn-agent <name> <task>
-# - Spawn watchers: /spawn-watcher <name> <command>
-# - Check status: /status
-# - Send messages: /tell <name> <message>
-# - Verify work: /verify
-# - Merge: /merge <name>
+# With specific tools
+spawn-agent fix "fix the bug" --tools "Read,Glob,Grep,Edit"
 ```
 
-## Three Modes of Operation
+### 3. From Spec File
 
-### Mode 1: Quick AI Questions
 ```bash
-$ ask "what kubectl command shows pod memory?"
-kubectl top pods --sort-by=memory
+# Spawn all agents in spec
+spawn-from-spec specs/my-spec.yaml
 
-$ howto "find large files over 100MB"
-find . -size +100M -type f
+# Spawn only one agent from spec
+spawn-from-spec specs/my-spec.yaml --only auth
 ```
 
-### Mode 2: Non-Interactive AI
+### 4. Monitor Progress
+
 ```bash
+# Overview of all agents
+status
+
+# See what an agent is doing
+progress auth
+
+# See code changes (colored diff)
+changes          # All agents
+changes auth     # Specific agent
+```
+
+### 5. Cleanup
+
+```bash
+# Remove one agent
+cleanup auth
+
+# Remove all agents
+cleanup-all
+```
+
+## K8s Watchers
+
+```bash
+# Watch specific pods
+watch-k8s api-pod-xxx worker-pod-xxx
+
+# Watch pods by label
+K8S_NAMESPACE=prod watch-k8s-label app=api
+
+# Generic watcher
+spawn-watcher logs "tail -f /var/log/app.log"
+```
+
+## All Commands
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `build-specs` | `bs` | Interactive spec builder wizard |
+| `spawn-from-spec <file>` | `sfs` | Spawn agents from spec file |
+| `spawn-agent <name> <task>` | `sa` | Spawn single agent |
+| `spawn-watcher <name> <cmd>` | `sw` | Spawn command watcher |
+| `watch-k8s <pods...>` | `wk` | Watch k8s pod logs |
+| `watch-k8s-label <label>` | `wkl` | Watch k8s pods by label |
+| `status` | `st` | Show all agents/watchers |
+| `progress <name>` | | See agent output |
+| `changes [name]` | | See code changes |
+| `peek <name>` | | Switch to tmux window |
+| `cleanup <name>` | `cu` | Remove agent + worktree |
+| `cleanup-all` | | Remove all agents |
+
+## Quick AI Helpers
+
+```bash
+# Quick question
+ask "what's the kubectl command for pod memory?"
+
+# Get just a command
+howto "find large files over 100MB"
+
+# Explain a command
+explain "tar -xzvf"
+
 # Review a diff
-git diff | claude -p "review for bugs"
-
-# Generate commit message
-git diff --staged | claude -p "write commit message"
-
-# Read-only analysis
-claude -p "explain codebase" --allowedTools "Read,Glob,Grep"
+review                  # Review unstaged changes
+review HEAD~3..HEAD     # Review last 3 commits
 ```
 
-### Mode 3: Supervisor/Orchestrator
-```bash
-$ claude
+## How It Works
 
-You: Plan the authentication refactor
+1. **Agents run non-interactively**: Each agent runs `claude -p "task" --allowedTools "..."` and works until done
+2. **Isolated worktrees**: Each agent gets its own git worktree (branch) to avoid conflicts
+3. **You review changes**: Use `changes` to see what each agent did
+4. **You merge**: When satisfied, merge the agent's branch manually
 
-Claude: Here's my plan:
-1. Extract auth interfaces
-2. Implement OAuth2 provider
-3. Add rate limiting
-4. Update tests
+## Spec File Format
 
-You: /spawn-agent auth-interfaces "Extract auth interfaces"
-Claude: ✓ Agent 'auth-interfaces' spawned
+```yaml
+# specs/my-project.yaml
+agents:
+  - name: auth
+    model: haiku
+    tools: Read,Glob,Grep,Edit,Write,Bash
+    verify: npm test -- --grep auth
+    task: |
+      Implement OAuth2 login flow.
+      - Add /auth/login endpoint
+      - Use JWT tokens with 24h expiry
 
-You: /spawn-agent oauth "Implement OAuth2 provider"
-Claude: ✓ Agent 'oauth' spawned
+      SCOPE (files you may modify):
+        - src/auth/
+        - src/middleware/auth.ts
 
-You: /status
-Claude: [shows status of all agents]
+      DO NOT MODIFY:
+        - src/api/*
+        - src/db/*
 
-You: /tell oauth "Use JWT for tokens"
-Claude: ✓ Sent to 'oauth'
-
-You: /verify
-Claude: [runs tests, shows results]
-
-You: /merge all
-Claude: [merges verified work]
+  - name: api
+    model: sonnet
+    ...
 ```
-
-## Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/spawn-agent <name> <task>` | Create agent in new worktree |
-| `/spawn-watcher <name> <cmd>` | Create monitoring window |
-| `/check <name>` | Read agent/watcher output |
-| `/tell <name> <msg>` | Send message to agent |
-| `/list` | List all windows |
-| `/status` | Comprehensive status report |
-| `/verify` | Run verification checks |
-| `/merge <name>` | Merge verified work |
-| `/cleanup <name>` | Remove without merging |
-
-## Shell Aliases
-
-| Alias | Command | Description |
-|-------|---------|-------------|
-| `ask` | `claude -p` | Quick AI question |
-| `howto` | `claude -p` | Get command for task |
-| `sf` | `orchestrate` | Start supervisor session |
-| `sfa` | `spawn-agent` | Create agent |
-| `sfw` | `spawn-watcher` | Create watcher |
-| `sfc` | `check-agent` | Check agent |
-| `sft` | `tell-agent` | Message agent |
-| `sfl` | `list-agents` | List all |
-| `sfx` | `cleanup-agent` | Remove agent |
-
-## tmux Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+b S` | Toggle broadcast mode |
-| `Ctrl+b A` | Create agent window |
-| `Ctrl+b W` | Create watcher window |
-| `Ctrl+b G` | Grid layout (4 panes) |
-| `Ctrl+b \|` | Split vertical |
-| `Ctrl+b -` | Split horizontal |
-| `Alt+1-9` | Switch to window N |
-
-## Agent Constraints
-
-Worker agents are constrained by default:
-
-**Allowed**:
-- Read files (Read, Glob, Grep)
-- Run tests and linters
-- Git add/commit in their worktree
-
-**Blocked**:
-- Edit/Write tools (must create diffs instead)
-- Destructive bash commands (rm, mv)
-- System modifications
-
-This ensures agents can work autonomously but can't make mistakes that are hard to undo.
 
 ## Directory Structure
 
 ```
-shellflow/
-├── .claude/
-│   ├── commands/          # Slash commands
-│   │   ├── spawn-agent.md
-│   │   ├── spawn-watcher.md
-│   │   ├── check.md
-│   │   ├── tell.md
-│   │   ├── list.md
-│   │   ├── status.md
-│   │   ├── verify.md
-│   │   ├── merge.md
-│   │   └── cleanup.md
-│   ├── hooks/
-│   │   └── agent-filter.sh  # Permission filter
-│   └── settings.local.json
+~/.shellflow/
 ├── config/
-│   ├── shellflow.zsh      # Shell functions
-│   ├── tmux.conf          # tmux configuration
-│   └── agent-settings.json
+│   ├── shellflow.zsh      # Shell functions (source this)
+│   └── tmux.conf          # tmux configuration
 ├── scripts/
 │   ├── setup.sh           # Installation
-│   └── uninstall.sh       # Removal
-├── docs/
-│   ├── ghostty-walkthrough.md
-│   ├── wezterm-walkthrough.md
-│   ├── warp-walkthrough.md
-│   └── research-report.md
-└── README.md
+│   ├── build-specs.sh     # Spec builder wizard
+│   └── install-to-project.sh
+└── docs/
+    └── ...
+
+your-project/
+├── specs/                 # Your agent specs (gitignore this)
+│   └── 2024-01-18-auth-api.yaml
+└── ../worktrees/          # Agent worktrees (auto-created)
+    ├── auth/
+    └── api/
 ```
 
-## Recommended Stack
+## Tips
 
-| Component | Recommendation |
-|-----------|----------------|
-| Terminal | **Ghostty** (fast) or **iTerm2** (reliable) |
-| Multiplexer | **tmux** |
-| Shell | **Zsh** with the shellflow config |
-| AI | **Claude Code** (your API key) |
-
-## Documentation
-
-- **[Complete Summary](docs/SUMMARY.md)** - Full implementation details, architecture, and reasoning
-- **[Usage Guide](docs/USAGE.md)** - How to use Shellflow in other projects
-- **[Research Report](docs/research-report.md)** - Tool comparisons and alternatives
-
-## Alternative Tools
-
-See [docs/research-report.md](docs/research-report.md) for detailed comparisons:
-
-- **Worktrunk**: Simplified worktree management CLI
-- **Ralph Orchestrator**: Autonomous loop-based execution
-- **Auto-Claude**: Visual Kanban-based agent management
-- **dmux/workmux**: Alternative multiplexing tools
-
-## Terminal Walkthroughs
-
-Detailed guides for setting up your terminal:
-
-- [Ghostty Walkthrough](docs/ghostty-walkthrough.md)
-- [WezTerm Walkthrough](docs/wezterm-walkthrough.md)
-- [Warp Walkthrough](docs/warp-walkthrough.md)
-
-## Troubleshooting
-
-### Agent not responding
-```bash
-# Check if window exists
-tmux list-windows
-
-# Check agent output
-/check <name>
-
-# Send a status request
-/tell <name> "Report your status"
-```
-
-### Worktree issues
-```bash
-# List worktrees
-git worktree list
-
-# Remove stuck worktree
-git worktree remove --force ../worktrees/<name>
-```
-
-### tmux session lost
-```bash
-# List sessions
-tmux list-sessions
-
-# Reattach
-tmux attach -t shellflow
-```
+1. **Use haiku for simple tasks** - faster and cheaper
+2. **Be specific in task descriptions** - agents work better with clear scope
+3. **Check `changes` before merging** - review what agents actually did
+4. **Use collision detection** - `build-specs` prevents agents from conflicting
 
 ## License
 

@@ -1,41 +1,24 @@
-# Shellflow - Agentic Workflow Shell Configuration
-# Add this to your ~/.zshrc: source /path/to/shellflow/config/shellflow.zsh
+# Shellflow - Simple Non-Interactive Agent Orchestration
+# Human is the supervisor. Agents run autonomously until done.
 #
-# CORE CONCEPT: You ALWAYS stay in your main pane.
-# - Run bash commands directly
-# - Talk to Claude Code (orchestrator mode)
-# - Quick AI questions with 'ask' or 'claude -p'
-# - Spawn agents/watchers in OTHER windows (you don't switch)
-# - Check/tell agents from YOUR pane (output comes to you)
+# Add to ~/.zshrc: source /path/to/shellflow/config/shellflow.zsh
 
 # ============================================
-# MODE SWITCHING (all from your main pane)
+# QUICK AI HELPERS (non-interactive)
 # ============================================
 
-# Enter orchestrator mode (Claude Code interactive)
-# You stay in your pane, Claude runs here
-orchestrator() {
-  echo "Entering orchestrator mode... (type 'exit' or Ctrl+D to return to bash)"
-  claude
-}
-alias oo='orchestrator'
-
-# Quick AI question (one-shot, stays in bash)
 ask() {
   claude -p "$*"
 }
 
-# Get just the command (no explanation)
 howto() {
   claude -p "Give me ONLY the command, no explanation: $*"
 }
 
-# Explain a command
 explain() {
   claude -p "Explain this command briefly: $*"
 }
 
-# Review code
 review() {
   if [ -n "$1" ]; then
     git diff "$@" | claude -p "Review this diff for bugs and issues"
@@ -44,23 +27,47 @@ review() {
   fi
 }
 
-# Generate commit message
-genmsg() {
-  git diff --staged | claude -p "Write a concise commit message (conventional commits)"
-}
-
 # ============================================
-# SPAWN AGENTS (in background, you stay here)
+# SPAWN AGENT (non-interactive, autonomous)
 # ============================================
 
-# Spawn single agent - DOES NOT switch window
 spawn-agent() {
-  local name=$1
-  shift
-  local task="$*"
+  local name=""
+  local task=""
+  local model="sonnet"
+  local tools="Read,Glob,Grep,Edit,Write,Bash"
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --model|-m)
+        model="$2"
+        shift 2
+        ;;
+      --tools|-t)
+        tools="$2"
+        shift 2
+        ;;
+      *)
+        if [ -z "$name" ]; then
+          name="$1"
+        else
+          task="$task $1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  task="${task# }"  # trim leading space
 
   if [ -z "$name" ] || [ -z "$task" ]; then
-    echo "Usage: spawn-agent <name> <task>"
+    echo "Usage: spawn-agent <name> <task> [--model sonnet|haiku|opus] [--tools 'Read,Edit,...']"
+    echo ""
+    echo "Examples:"
+    echo "  spawn-agent auth 'implement oauth login'"
+    echo "  spawn-agent api 'add rate limiting' --model haiku"
+    echo "  spawn-agent fix 'fix the bug' --tools 'Read,Glob,Grep,Edit'"
     return 1
   fi
 
@@ -69,120 +76,42 @@ spawn-agent() {
 
   # Create worktree
   mkdir -p "$repo_root/../worktrees"
-  git worktree add -b "$name" "$worktree_path" 2>/dev/null || true
+  git worktree add -b "$name" "$worktree_path" 2>/dev/null || {
+    echo "Worktree '$name' may already exist, reusing..."
+  }
 
-  # Create window WITHOUT switching (-d flag)
+  # Create tmux window
   tmux new-window -d -n "$name" -c "$worktree_path"
 
-  # Start agent in that window
-  tmux send-keys -t "$name" "claude" Enter
+  # Build the claude command
+  local claude_cmd="claude -p '${task}' --allowedTools '${tools}'"
 
-  # Wait for Claude to initialize (check for the input prompt ❯)
-  local retries=0
-  while [ $retries -lt 15 ]; do
-    sleep 1
-    # Look for Claude's input prompt (❯) at the start of a line
-    if tmux capture-pane -t "$name" -p 2>/dev/null | grep -q "^❯"; then
-      break
-    fi
-    ((retries++))
-  done
-  sleep 2  # Extra buffer after prompt appears
-
-  tmux send-keys -t "$name" "$task" Enter
-
-  echo "✓ Agent '$name' spawned (window created in background)"
-  echo "  Check: check $name"
-  echo "  Tell:  tell $name <message>"
-}
-
-# Spawn multiple agents in grid - DOES NOT switch
-spawn-agents() {
-  local specs=("$@")
-
-  if [ ${#specs[@]} -lt 2 ]; then
-    echo "Usage: spawn-agents 'name1:task1' 'name2:task2' ..."
-    return 1
+  # Add model if not default
+  if [ "$model" != "sonnet" ]; then
+    claude_cmd="$claude_cmd --model $model"
   fi
 
-  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-  mkdir -p "$repo_root/../worktrees"
+  # Run agent non-interactively
+  tmux send-keys -t "$name" "$claude_cmd" Enter
 
-  # Create window WITHOUT switching
-  tmux new-window -d -n "agents"
-
-  local pane=0
-  for spec in "${specs[@]}"; do
-    local name="${spec%%:*}"
-    local task="${spec#*:}"
-    local worktree_path="$repo_root/../worktrees/$name"
-
-    # Create worktree
-    git worktree add -b "$name" "$worktree_path" 2>/dev/null || true
-
-    # Create panes
-    if [ $pane -gt 0 ]; then
-      if [ $((pane % 2)) -eq 1 ]; then
-        tmux split-window -d -h -t "agents"
-      else
-        tmux select-pane -t "agents.0"
-        tmux split-window -d -v -t "agents"
-      fi
-    fi
-
-    ((pane++))
-  done
-
-  # Balance layout
-  tmux select-layout -t "agents" tiled
-
-  # Now send commands to each pane
-  pane=0
-  for spec in "${specs[@]}"; do
-    local name="${spec%%:*}"
-    local task="${spec#*:}"
-    local worktree_path="$repo_root/../worktrees/$name"
-
-    tmux send-keys -t "agents.$pane" "cd '$worktree_path' && claude" Enter
-    ((pane++))
-  done
-
-  # Wait for Claude instances to initialize (check for input prompt ❯)
-  echo "  Waiting for Claude instances to initialize..."
-  local retries=0
-  while [ $retries -lt 20 ]; do
-    sleep 1
-    local ready=0
-    for i in $(seq 0 $((${#specs[@]} - 1))); do
-      if tmux capture-pane -t "agents.$i" -p 2>/dev/null | grep -q "^❯"; then
-        ((ready++))
-      fi
-    done
-    if [ $ready -eq ${#specs[@]} ]; then
-      break
-    fi
-    ((retries++))
-  done
-  sleep 2  # Extra buffer
-
-  # Send tasks to each pane
-  pane=0
-  for spec in "${specs[@]}"; do
-    local task="${spec#*:}"
-    tmux send-keys -t "agents.$pane" "$task" Enter
-    ((pane++))
-  done
-
-  echo "✓ Created ${#specs[@]} agents in 'agents' window (background)"
-  echo "  View:   peek agents"
-  echo "  Status: status"
+  echo "✓ Agent '$name' spawned (non-interactive, autonomous)"
+  echo "  Model: $model"
+  echo "  Tools: $tools"
+  echo "  Task: $task"
+  echo ""
+  echo "  Commands:"
+  echo "    progress $name    - see what agent is doing"
+  echo "    changes $name     - see code changes"
+  echo "    cleanup $name     - remove agent when done"
 }
 
+# Short alias
+sa() { spawn-agent "$@"; }
+
 # ============================================
-# SPAWN WATCHERS (in background, you stay here)
+# SPAWN WATCHERS (k8s focused)
 # ============================================
 
-# Spawn single watcher - DOES NOT switch
 spawn-watcher() {
   local name=$1
   shift
@@ -193,215 +122,217 @@ spawn-watcher() {
     return 1
   fi
 
-  # Create window WITHOUT switching (-d flag)
   tmux new-window -d -n "watch-$name"
   tmux send-keys -t "watch-$name" "$cmd" Enter
 
-  echo "✓ Watcher 'watch-$name' started (background)"
-  echo "  Check: check watch-$name"
+  echo "✓ Watcher 'watch-$name' started"
+  echo "  Check: progress watch-$name"
 }
 
-# Spawn watcher dashboard with preset - DOES NOT switch
-spawn-watchers() {
-  local preset="$1"
-  local watchers=()
+# K8s watchers with pod names
+watch-k8s() {
+  local namespace="${K8S_NAMESPACE:-default}"
+  local pods=("$@")
 
-  case "$preset" in
-    k8s)
-      watchers=(
-        "kubectl get pods -w"
-        "kubectl logs -f -l app=\${APP:-app} --tail=50"
-        "kubectl get events -w"
-        "watch -n 5 kubectl top pods"
-      )
-      ;;
-    docker)
-      watchers=(
-        "watch -n 2 docker ps"
-        "docker stats"
-        "docker logs -f \$(docker ps -q | head -1) 2>/dev/null || echo 'No containers'"
-      )
-      ;;
-    dev)
-      watchers=(
-        "npm run test -- --watch 2>/dev/null || echo 'No test:watch'"
-        "watch -n 5 'git status --short'"
-        "fswatch -r ./src 2>/dev/null || watch -n 2 ls -la"
-      )
-      ;;
-    system)
-      watchers=(
-        "htop 2>/dev/null || top"
-        "watch -n 2 df -h"
-        "watch -n 5 'ps aux | head -20'"
-      )
-      ;;
-    *)
-      echo "Usage: spawn-watchers <preset>"
-      echo "Presets: k8s, docker, dev, system"
-      return 1
-      ;;
-  esac
-
-  # Create window WITHOUT switching
-  tmux new-window -d -n "watchers"
-
-  local pane=0
-  for cmd in "${watchers[@]}"; do
-    if [ $pane -gt 0 ]; then
-      if [ $((pane % 2)) -eq 1 ]; then
-        tmux split-window -d -h -t "watchers"
-      else
-        tmux select-pane -t "watchers.0"
-        tmux split-window -d -v -t "watchers"
-      fi
-    fi
-    ((pane++))
-  done
-
-  tmux select-layout -t "watchers" tiled
-
-  pane=0
-  for cmd in "${watchers[@]}"; do
-    tmux send-keys -t "watchers.$pane" "$cmd" Enter
-    ((pane++))
-  done
-
-  echo "✓ Watcher dashboard '$preset' created (background)"
-  echo "  View: peek watchers"
-}
-
-# Broadcast command with different params - DOES NOT switch
-broadcast() {
-  local template="$1"
-  shift
-  local params=("$@")
-
-  if [ -z "$template" ] || [ ${#params[@]} -eq 0 ]; then
-    echo "Usage: broadcast 'cmd with {} placeholder' param1 param2 ..."
-    echo "Example: broadcast 'kubectl logs {} -f' pod1 pod2 pod3"
+  if [ ${#pods[@]} -eq 0 ]; then
+    echo "Usage: watch-k8s <pod1> <pod2> ..."
+    echo "  Set K8S_NAMESPACE env var for namespace (default: default)"
     return 1
   fi
 
-  # Create window WITHOUT switching
-  local win_name="broadcast-$(date +%s)"
-  tmux new-window -d -n "$win_name"
+  # Create watchers window with grid
+  tmux new-window -d -n "k8s-watch"
 
   local pane=0
-  for param in "${params[@]}"; do
+  for pod in "${pods[@]}"; do
     if [ $pane -gt 0 ]; then
       if [ $((pane % 2)) -eq 1 ]; then
-        tmux split-window -d -h -t "$win_name"
+        tmux split-window -d -h -t "k8s-watch"
       else
-        tmux select-pane -t "$win_name.0"
-        tmux split-window -d -v -t "$win_name"
+        tmux split-window -d -v -t "k8s-watch"
       fi
     fi
     ((pane++))
   done
 
-  tmux select-layout -t "$win_name" tiled
+  tmux select-layout -t "k8s-watch" tiled
 
   pane=0
-  for param in "${params[@]}"; do
-    local cmd="${template//\{\}/$param}"
-    tmux send-keys -t "$win_name.$pane" "$cmd" Enter
+  for pod in "${pods[@]}"; do
+    tmux send-keys -t "k8s-watch.$pane" "kubectl logs -f $pod -n $namespace --tail=100" Enter
     ((pane++))
   done
 
-  echo "✓ Broadcast to ${#params[@]} panes (background)"
-  echo "  View: peek $win_name"
+  echo "✓ K8s watchers started for: ${pods[*]}"
+  echo "  Namespace: $namespace"
+  echo "  View: peek k8s-watch"
 }
 
-# Quick pod logs
-watch-pods() {
-  if [ "$1" = "-l" ]; then
-    local pods=($(kubectl get pods -l "$2" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null))
-    if [ ${#pods[@]} -eq 0 ]; then
-      echo "No pods found"
-      return 1
-    fi
-    broadcast "kubectl logs {} -f --tail=100" "${pods[@]}"
-  else
-    broadcast "kubectl logs {} -f --tail=100" "$@"
+# Watch pods by label
+watch-k8s-label() {
+  local label=$1
+  local namespace="${K8S_NAMESPACE:-default}"
+
+  if [ -z "$label" ]; then
+    echo "Usage: watch-k8s-label <label-selector>"
+    echo "  Example: watch-k8s-label app=api"
+    return 1
   fi
+
+  local pods=($(kubectl get pods -l "$label" -n "$namespace" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null))
+
+  if [ ${#pods[@]} -eq 0 ]; then
+    echo "No pods found with label: $label"
+    return 1
+  fi
+
+  watch-k8s "${pods[@]}"
 }
 
+# Short aliases
+sw() { spawn-watcher "$@"; }
+wk() { watch-k8s "$@"; }
+wkl() { watch-k8s-label "$@"; }
+
 # ============================================
-# CHECK/TELL/CONTROL (from your main pane)
+# PROGRESS & CHANGES (human supervisor tools)
 # ============================================
 
-# Check agent output (output comes TO you)
-check() {
+# See agent output / what it's doing
+progress() {
   local name=$1
-  local lines=${2:-50}
+  local lines=${2:-80}
 
   if [ -z "$name" ]; then
     echo "=== All Windows ==="
-    tmux list-windows -F "  #{window_index}: #{window_name}"
+    tmux list-windows -F "  [#{window_index}] #{window_name}"
+    echo ""
+    echo "Usage: progress <name> [lines]"
     return
   fi
 
-  echo "=== $name (last $lines lines) ==="
+  echo "╔═══════════════════════════════════════════════════════════════╗"
+  echo "║  PROGRESS: $name"
+  echo "╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
   tmux capture-pane -t "$name" -p -S -$lines 2>/dev/null || {
     echo "Window '$name' not found"
     tmux list-windows -F "  Available: #{window_name}"
   }
 }
 
-# Send message to agent (from your pane)
-tell() {
+# See code changes in agent worktree (nice colored diff)
+changes() {
   local name=$1
-  shift
-  local msg="$*"
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-  if [ -z "$name" ] || [ -z "$msg" ]; then
-    echo "Usage: tell <window> <message>"
+  if [ -z "$name" ]; then
+    # Show changes for ALL agents
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║  ALL AGENT CHANGES                                            ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    local worktrees_dir="$repo_root/../worktrees"
+    if [ ! -d "$worktrees_dir" ]; then
+      echo "No worktrees found"
+      return
+    fi
+
+    for agent_dir in "$worktrees_dir"/*/; do
+      if [ -d "$agent_dir" ]; then
+        local agent_name=$(basename "$agent_dir")
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "AGENT: $agent_name"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        local changed=$(git -C "$agent_dir" diff --stat 2>/dev/null)
+        if [ -n "$changed" ]; then
+          echo "$changed"
+          echo ""
+          git -C "$agent_dir" diff --color=always 2>/dev/null | head -100
+        else
+          echo "(no changes)"
+        fi
+        echo ""
+      fi
+    done
+    return
+  fi
+
+  # Show changes for specific agent
+  local worktree_path="$repo_root/../worktrees/$name"
+
+  if [ ! -d "$worktree_path" ]; then
+    echo "Agent worktree '$name' not found"
     return 1
   fi
 
-  tmux send-keys -t "$name" "$msg" Enter
-  echo "✓ Sent to '$name'"
+  echo "╔═══════════════════════════════════════════════════════════════╗"
+  echo "║  CHANGES: $name"
+  echo "╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+
+  # Summary
+  echo "FILES CHANGED:"
+  git -C "$worktree_path" diff --stat 2>/dev/null || echo "(no changes)"
+  echo ""
+
+  # Detailed diff with colors
+  echo "DIFF:"
+  git -C "$worktree_path" diff --color=always 2>/dev/null || echo "(no changes)"
 }
 
-# Quick status of all agents
+# ============================================
+# STATUS & CONTROL
+# ============================================
+
 status() {
-  echo "╔═══════════════════════════════════════════════════════════╗"
-  echo "║                    SHELLFLOW STATUS                       ║"
-  echo "╚═══════════════════════════════════════════════════════════╝"
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+  echo "╔═══════════════════════════════════════════════════════════════╗"
+  echo "║                    SHELLFLOW STATUS                           ║"
+  echo "╚═══════════════════════════════════════════════════════════════╝"
   echo ""
-  echo "WINDOWS:"
-  tmux list-windows -F "  [#{window_index}] #{window_name} #{?window_active,← YOU ARE HERE,}"
+
+  echo "TMUX WINDOWS:"
+  tmux list-windows -F "  [#{window_index}] #{window_name} #{?window_active,← YOU,}"
   echo ""
-  echo "WORKTREES:"
-  git worktree list 2>/dev/null | sed 's/^/  /' || echo "  (not in git repo)"
+
+  echo "AGENT WORKTREES:"
+  local worktrees_dir="$repo_root/../worktrees"
+  if [ -d "$worktrees_dir" ]; then
+    for agent_dir in "$worktrees_dir"/*/; do
+      if [ -d "$agent_dir" ]; then
+        local agent_name=$(basename "$agent_dir")
+        local changed=$(git -C "$agent_dir" diff --stat --shortstat 2>/dev/null | tail -1)
+        if [ -n "$changed" ]; then
+          echo "  $agent_name: $changed"
+        else
+          echo "  $agent_name: (no changes)"
+        fi
+      fi
+    done
+  else
+    echo "  (no agents)"
+  fi
   echo ""
+
   echo "COMMANDS:"
-  echo "  check <name>      - See window output"
-  echo "  tell <name> <msg> - Send to window"
-  echo "  peek <name>       - Quick look (switch & back)"
-  echo "  kill <name>       - Close window"
+  echo "  progress <name>  - see agent output"
+  echo "  changes [name]   - see code changes"
+  echo "  cleanup <name>   - remove agent"
+  echo "  peek <name>      - switch to window"
 }
 
-# Peek at a window briefly (switches, then you manually come back with Ctrl+b 0)
+# Peek at a window
 peek() {
   local name=$1
   if [ -z "$name" ]; then
     echo "Usage: peek <window>"
     return 1
   fi
-  echo "Switching to '$name'... (Ctrl+b + number to return)"
   tmux select-window -t "$name"
-}
-
-# Kill a window
-kill-window() {
-  local name=$1
-  if [ -z "$name" ]; then
-    echo "Usage: kill-window <name>"
-    return 1
-  fi
-  tmux kill-window -t "$name" 2>/dev/null && echo "✓ Killed '$name'" || echo "Window not found"
 }
 
 # Cleanup agent (kill window + remove worktree)
@@ -413,26 +344,40 @@ cleanup() {
   fi
 
   tmux kill-window -t "$name" 2>/dev/null
-  git worktree remove --force "../worktrees/$name" 2>/dev/null
+
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  git worktree remove --force "$repo_root/../worktrees/$name" 2>/dev/null
   git branch -D "$name" 2>/dev/null
 
   echo "✓ Cleaned up '$name'"
 }
 
+# Cleanup all agents
+cleanup-all() {
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  local worktrees_dir="$repo_root/../worktrees"
+
+  if [ ! -d "$worktrees_dir" ]; then
+    echo "No agents to clean up"
+    return
+  fi
+
+  echo "Cleaning up all agents..."
+  for agent_dir in "$worktrees_dir"/*/; do
+    if [ -d "$agent_dir" ]; then
+      local agent_name=$(basename "$agent_dir")
+      cleanup "$agent_name"
+    fi
+  done
+  echo "✓ All agents cleaned up"
+}
+
 # ============================================
-# ALIASES (short forms)
+# ALIASES
 # ============================================
 
-alias oo='orchestrator'           # Enter Claude Code
-alias sa='spawn-agent'            # Spawn single agent
-alias sas='spawn-agents'          # Spawn agent grid
-alias sw='spawn-watcher'          # Spawn single watcher
-alias sws='spawn-watchers'        # Spawn watcher dashboard
-alias bc='broadcast'              # Broadcast command
-alias wp='watch-pods'             # Watch pod logs
-alias st='status'                 # Show status
-alias kw='kill-window'            # Kill window
-alias cu='cleanup'                # Cleanup agent
+alias st='status'
+alias cu='cleanup'
 
 # ============================================
 # TAB COMPLETION
@@ -444,13 +389,145 @@ _shellflow_windows() {
   _describe 'windows' windows
 }
 
-# Only set up completions if compdef is available (requires compinit)
+_shellflow_agents() {
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  local agents=()
+  local worktrees_dir="$repo_root/../worktrees"
+  if [ -d "$worktrees_dir" ]; then
+    agents=($(ls "$worktrees_dir" 2>/dev/null))
+  fi
+  _describe 'agents' agents
+}
+
 if type compdef &>/dev/null; then
-  compdef _shellflow_windows check tell peek kill-window cleanup kw cu
+  compdef _shellflow_windows progress peek
+  compdef _shellflow_agents changes cleanup
 fi
 
 # ============================================
-# STARTUP MESSAGE
+# SPEC BUILDER & SPAWN FROM SPEC
+# ============================================
+
+# Interactive spec builder wizard
+build-specs() {
+  local script_dir="${SHELLFLOW_DIR:-$HOME/.shellflow}"
+  if [ -f "$script_dir/scripts/build-specs.sh" ]; then
+    bash "$script_dir/scripts/build-specs.sh" "$@"
+  else
+    # Try relative to this script
+    local zsh_dir="$(dirname "${(%):-%x}")"
+    bash "$zsh_dir/../scripts/build-specs.sh" "$@"
+  fi
+}
+
+# Spawn agents from a spec file
+spawn-from-spec() {
+  local spec_file=$1
+  local only_agent=$2
+
+  if [ -z "$spec_file" ]; then
+    echo "Usage: spawn-from-spec <spec.yaml> [--only <agent-name>]"
+    return 1
+  fi
+
+  if [ ! -f "$spec_file" ]; then
+    echo "Spec file not found: $spec_file"
+    return 1
+  fi
+
+  # Parse --only flag
+  if [ "$2" = "--only" ]; then
+    only_agent="$3"
+  fi
+
+  echo "╔═══════════════════════════════════════════════════════════════╗"
+  echo "║  SPAWNING AGENTS FROM SPEC                                    ║"
+  echo "╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "Spec file: $spec_file"
+  echo ""
+
+  # Parse YAML and spawn agents
+  # Using simple grep/sed parsing (works for our simple format)
+  local in_agent=false
+  local current_name=""
+  local current_model="sonnet"
+  local current_tools="Read,Glob,Grep,Edit,Write,Bash"
+  local current_task=""
+  local reading_task=false
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Detect new agent block
+    if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*name:[[:space:]]*(.+)$ ]]; then
+      # Spawn previous agent if exists
+      if [ -n "$current_name" ] && [ -n "$current_task" ]; then
+        if [ -z "$only_agent" ] || [ "$only_agent" = "$current_name" ]; then
+          echo "Spawning: $current_name ($current_model)"
+          spawn-agent "$current_name" "$current_task" --model "$current_model" --tools "$current_tools"
+          echo ""
+        fi
+      fi
+
+      # Start new agent
+      current_name="${BASH_REMATCH[1]}"
+      current_name=$(echo "$current_name" | xargs)  # trim
+      current_model="sonnet"
+      current_tools="Read,Glob,Grep,Edit,Write,Bash"
+      current_task=""
+      reading_task=false
+      in_agent=true
+
+    elif [ "$in_agent" = true ]; then
+      # Parse agent properties
+      if [[ "$line" =~ ^[[:space:]]*model:[[:space:]]*(.+)$ ]]; then
+        current_model="${BASH_REMATCH[1]}"
+        current_model=$(echo "$current_model" | xargs)
+
+      elif [[ "$line" =~ ^[[:space:]]*tools:[[:space:]]*(.+)$ ]]; then
+        current_tools="${BASH_REMATCH[1]}"
+        current_tools=$(echo "$current_tools" | xargs)
+
+      elif [[ "$line" =~ ^[[:space:]]*task:[[:space:]]*\|?$ ]]; then
+        reading_task=true
+        current_task=""
+
+      elif [ "$reading_task" = true ]; then
+        # Check if we've hit another property (end of task)
+        if [[ "$line" =~ ^[[:space:]]*(name|model|tools|verify|scope):[[:space:]] ]]; then
+          reading_task=false
+        elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*name: ]]; then
+          reading_task=false
+        else
+          # Append to task (strip leading whitespace for YAML multiline)
+          local task_line=$(echo "$line" | sed 's/^[[:space:]]*//')
+          if [ -n "$current_task" ]; then
+            current_task="$current_task $task_line"
+          else
+            current_task="$task_line"
+          fi
+        fi
+      fi
+    fi
+  done < "$spec_file"
+
+  # Spawn last agent
+  if [ -n "$current_name" ] && [ -n "$current_task" ]; then
+    if [ -z "$only_agent" ] || [ "$only_agent" = "$current_name" ]; then
+      echo "Spawning: $current_name ($current_model)"
+      spawn-agent "$current_name" "$current_task" --model "$current_model" --tools "$current_tools"
+      echo ""
+    fi
+  fi
+
+  echo "Done! Use 'status' to see all agents."
+}
+
+# Alias
+alias bs='build-specs'
+alias sfs='spawn-from-spec'
+
+# ============================================
+# HELP
 # ============================================
 
 shellflow-help() {
@@ -458,27 +535,32 @@ shellflow-help() {
 ╔═══════════════════════════════════════════════════════════════════╗
 ║                      SHELLFLOW COMMANDS                           ║
 ╠═══════════════════════════════════════════════════════════════════╣
-║ MODE SWITCHING (you stay in this pane):                           ║
-║   oo                    Enter Claude orchestrator mode            ║
-║   ask "question"        Quick AI answer                           ║
-║   howto "task"          Get command for task                      ║
-║   (just type)           Run bash commands directly                ║
+║ QUICK AI:                                                         ║
+║   ask "question"              Quick AI answer                     ║
+║   howto "task"                Get command for task                ║
+║   explain "cmd"               Explain a command                   ║
+║   review [file]               Review diff for bugs                ║
 ║                                                                   ║
-║ SPAWN (creates in background, you stay here):                     ║
-║   sa <name> <task>         Single agent                          ║
-║   sas 'n1:t1' 'n2:t2'      Agent grid (2-4)                      ║
-║   sw <name> <cmd>          Single watcher                        ║
-║   sws <preset>             Watcher dashboard (k8s/docker/dev)    ║
-║   bc 'cmd {}' p1 p2        Broadcast with different params       ║
-║   wp pod1 pod2             Watch pod logs                        ║
+║ SPEC BUILDER (interactive wizard):                                ║
+║   build-specs (bs)            Create agent specs interactively   ║
+║   spawn-from-spec (sfs) <file>  Spawn agents from spec file      ║
 ║                                                                   ║
-║ CONTROL (from your pane):                                         ║
-║   check <name>          See window output                        ║
-║   tell <name> <msg>     Send message to window                   ║
-║   st                    Status of all windows                    ║
-║   peek <name>           Switch to window (Ctrl+b 0 to return)    ║
-║   kw <name>             Kill window                              ║
-║   cu <name>             Cleanup agent + worktree                 ║
+║ SPAWN AGENTS (autonomous, non-interactive):                       ║
+║   spawn-agent <name> <task> [--model X] [--tools Y]              ║
+║   sa auth "implement oauth" --model haiku                        ║
+║                                                                   ║
+║ SPAWN WATCHERS:                                                   ║
+║   spawn-watcher <name> <cmd>  Generic watcher                    ║
+║   watch-k8s pod1 pod2         K8s pod logs (set K8S_NAMESPACE)   ║
+║   watch-k8s-label app=api     K8s pods by label                  ║
+║                                                                   ║
+║ MONITOR & CONTROL:                                                ║
+║   progress <name>             See agent output                   ║
+║   changes [name]              See code changes (all if no name)  ║
+║   status                      Overview of all agents             ║
+║   peek <name>                 Switch to window                   ║
+║   cleanup <name>              Remove agent + worktree            ║
+║   cleanup-all                 Remove all agents                  ║
 ╚═══════════════════════════════════════════════════════════════════╝
 EOF
 }
