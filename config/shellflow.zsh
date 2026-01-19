@@ -310,6 +310,82 @@ _get_repo_from_worktree() {
   fi
 }
 
+# Diff agent branch vs main (works from anywhere)
+diff-agent() {
+  local name=$1
+  local repo=$2
+
+  if [ -z "$name" ]; then
+    echo "Usage: diff-agent <agent-name> [repo-name]"
+    echo ""
+    echo "Shows diff between agent's branch and main"
+    echo "Example: diff-agent fetcher deals-bot"
+    return 1
+  fi
+
+  # Find the repo
+  local repo_root=""
+
+  if [ -n "$repo" ] && [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+    repo_root="$SHELLFLOW_PROJECTS_ROOT/$repo"
+  elif [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+    # Search for the agent across all repos
+    for repo_dir in "$SHELLFLOW_PROJECTS_ROOT/worktrees"/*/; do
+      if [ -d "$repo_dir/$name" ]; then
+        # Found it - get the actual repo root
+        repo_root=$(git -C "$repo_dir/$name" rev-parse --show-toplevel 2>/dev/null)
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$repo_root" ]; then
+    # Fallback to current repo
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+  fi
+
+  if [ -z "$repo_root" ]; then
+    echo "Could not find repo. Specify repo name or set SHELLFLOW_PROJECTS_ROOT"
+    return 1
+  fi
+
+  local repo_name=$(basename "$repo_root")
+
+  # Find the main branch name
+  local main_branch="main"
+  if git -C "$repo_root" show-ref --verify --quiet refs/heads/master; then
+    main_branch="master"
+  fi
+
+  echo "╔═══════════════════════════════════════════════════════════════╗"
+  echo "║  DIFF: $name vs $main_branch [$repo_name]"
+  echo "╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+
+  # Check if branch exists
+  if ! git -C "$repo_root" show-ref --verify --quiet refs/heads/"$name"; then
+    echo "Branch '$name' not found in $repo_name"
+    return 1
+  fi
+
+  # Show commits
+  echo "COMMITS:"
+  git -C "$repo_root" log --oneline "$main_branch".."$name" 2>/dev/null || echo "(no commits)"
+  echo ""
+
+  # Show file changes
+  echo "FILES CHANGED:"
+  git -C "$repo_root" diff --stat "$main_branch".."$name" 2>/dev/null || echo "(no changes)"
+  echo ""
+
+  # Show diff
+  echo "DIFF:"
+  git -C "$repo_root" diff --color=always "$main_branch".."$name" 2>/dev/null
+}
+
+# Alias
+da() { diff-agent "$@"; }
+
 # See code changes in agent worktree (nice colored diff)
 changes() {
   local name=$1
@@ -611,6 +687,72 @@ cleanup-all() {
 alias st='status'
 alias cu='cleanup'
 
+# List all agents across all repos (works from anywhere)
+list-agents() {
+  echo "╔═══════════════════════════════════════════════════════════════╗"
+  echo "║  ALL AGENTS                                                   ║"
+  echo "╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+
+  local found_any=false
+
+  if [ -z "$SHELLFLOW_PROJECTS_ROOT" ]; then
+    echo "Set SHELLFLOW_PROJECTS_ROOT to use this command from anywhere"
+    echo "Example: export SHELLFLOW_PROJECTS_ROOT=~/projects"
+    return 1
+  fi
+
+  if [ ! -d "$SHELLFLOW_PROJECTS_ROOT/worktrees" ]; then
+    echo "(no agents)"
+    return
+  fi
+
+  printf "%-15s %-20s %-10s %s\n" "REPO" "AGENT" "STATUS" "CHANGES"
+  printf "%-15s %-20s %-10s %s\n" "────" "─────" "──────" "───────"
+
+  for repo_dir in "$SHELLFLOW_PROJECTS_ROOT/worktrees"/*/; do
+    if [ -d "$repo_dir" ]; then
+      local repo_name=$(basename "$repo_dir")
+
+      for agent_dir in "$repo_dir"/*/; do
+        if [ -d "$agent_dir" ]; then
+          found_any=true
+          local agent_name=$(basename "$agent_dir")
+
+          # Check if tmux window exists (agent still running)
+          local agent_status="done"
+          if tmux list-windows -F "#{window_name}" 2>/dev/null | grep -q "^${agent_name}$"; then
+            agent_status="running"
+          fi
+
+          # Count changed files
+          local changed_count=$(git -C "$agent_dir" diff --name-only 2>/dev/null | wc -l | tr -d ' ')
+          local committed_count=$(git -C "$agent_dir" log --oneline main..HEAD 2>/dev/null | wc -l | tr -d ' ')
+
+          local changes_info="${changed_count} uncommitted"
+          if [ "$committed_count" -gt 0 ]; then
+            changes_info="$changes_info, ${committed_count} commits"
+          fi
+
+          printf "%-15s %-20s %-10s %s\n" "$repo_name" "$agent_name" "$agent_status" "$changes_info"
+        fi
+      done
+    fi
+  done
+
+  if [ "$found_any" = false ]; then
+    echo "(no agents)"
+  fi
+
+  echo ""
+  echo "Commands:"
+  echo "  changes <agent>       - see uncommitted changes"
+  echo "  diff-agent <agent>    - see branch vs main"
+  echo "  progress <agent>      - see agent output"
+}
+
+alias la='list-agents'
+
 # ============================================
 # TAB COMPLETION
 # ============================================
@@ -833,9 +975,11 @@ shellflow-help() {
 ║   watch-k8s-label app=api     K8s pods by label                  ║
 ║                                                                   ║
 ║ MONITOR & CONTROL:                                                ║
-║   progress <name>             See agent output                   ║
-║   changes [name]              See code changes (all if no name)  ║
 ║   status                      Overview of all agents             ║
+║   list-agents (la)            List all agents (works from anywhere)║
+║   progress <name>             See agent output                   ║
+║   changes [name]              See uncommitted changes in worktree║
+║   diff-agent <name> (da)      See branch vs main (committed work)║
 ║   peek <name>                 Switch to window                   ║
 ║   cleanup <name>              Remove agent + worktree            ║
 ║   cleanup-all                 Remove all agents                  ║
