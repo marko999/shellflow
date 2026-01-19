@@ -15,29 +15,33 @@ Shellflow is a CLI tool for spawning multiple autonomous Claude agents that work
 
 ## Main Files
 
-- `config/shellflow.zsh` - All shell functions (spawn-agent, changes, progress, etc.)
+- `config/shellflow.zsh` - All shell functions (sf-spawn-agent, sf-changes, sf-progress, etc.)
 - `scripts/build-specs.sh` - Interactive spec builder wizard
 - `config/tmux.conf` - tmux configuration
 
 ## Shell Commands
 
+All commands use `sf-` prefix to avoid conflicts with Claude Code's built-in commands.
+
 ```bash
 # Spec builder
-build-specs              # Interactive wizard
+sf-build-specs              # Interactive wizard
 
 # Spawn agents
-spawn-agent <name> <task> [--model X] [--tools Y] [--repo R]
-spawn-from-spec <file>   # From YAML spec
+sf-spawn-agent <name> <task> [--model X] [--tools Y] [--repo R]
+sf-spawn-from-spec <file>   # From YAML spec
 
 # Monitor
-status                   # Overview
-progress <name>          # Agent output
-changes [name]           # Code diffs
+sf-status                   # Overview
+sf-progress <name>          # Agent output
+sf-changes [name]           # Code diffs
 
 # Cleanup
-cleanup <name>           # Remove one
-cleanup-all              # Remove all
+sf-cleanup <name>           # Remove one
+sf-cleanup-all              # Remove all
 ```
+
+Short aliases are also available: `sa`, `st`, `cu`, `la`, `da`, `bs`, `sfs`
 
 ## Multi-Repo Mode
 
@@ -47,14 +51,14 @@ Spawn agents across different repositories by setting `SHELLFLOW_PROJECTS_ROOT`:
 export SHELLFLOW_PROJECTS_ROOT=~/projects
 
 # Spawn agents in different repos
-spawn-agent api-auth "add oauth" --repo notetaker-api
-spawn-agent api-rate "rate limiting" --repo notetaker-api
-spawn-agent rec-fix "fix encoding" --repo notetaker-recorder
+sf-spawn-agent api-auth "add oauth" --repo notetaker-api
+sf-spawn-agent api-rate "rate limiting" --repo notetaker-api
+sf-spawn-agent rec-fix "fix encoding" --repo notetaker-recorder
 
 # All commands work across repos
-status                    # Shows agents grouped by repo
-changes                   # Shows changes across all repos
-cleanup api-auth          # Finds and cleans up agent
+sf-status                    # Shows agents grouped by repo
+sf-changes                   # Shows changes across all repos
+sf-cleanup api-auth          # Finds and cleans up agent
 ```
 
 Worktree structure in multi-repo mode:

@@ -31,7 +31,7 @@ review() {
 # SPAWN AGENT (non-interactive, autonomous)
 # ============================================
 
-spawn-agent() {
+sf-spawn-agent() {
   local name=""
   local task=""
   local model="sonnet"
@@ -152,19 +152,19 @@ spawn-agent() {
   echo "  Task: $task"
   echo ""
   echo "  Commands:"
-  echo "    progress $name    - see what agent is doing"
-  echo "    changes $name     - see code changes"
-  echo "    cleanup $name     - remove agent when done"
+  echo "    sf-progress $name    - see what agent is doing"
+  echo "    sf-changes $name     - see code changes"
+  echo "    sf-cleanup $name     - remove agent when done"
 }
 
 # Short alias
-sa() { spawn-agent "$@"; }
+sa() { sf-spawn-agent "$@"; }
 
 # ============================================
 # SPAWN WATCHERS (k8s focused)
 # ============================================
 
-spawn-watcher() {
+sf-spawn-watcher() {
   local name=$1
   shift
   local cmd="$*"
@@ -178,11 +178,11 @@ spawn-watcher() {
   tmux send-keys -t "watch-$name" "$cmd" Enter
 
   echo "✓ Watcher 'watch-$name' started"
-  echo "  Check: progress watch-$name"
+  echo "  Check: sf-progress watch-$name"
 }
 
 # K8s watchers with pod names
-watch-k8s() {
+sf-watch-k8s() {
   local namespace="${K8S_NAMESPACE:-default}"
   local pods=("$@")
 
@@ -217,11 +217,11 @@ watch-k8s() {
 
   echo "✓ K8s watchers started for: ${pods[*]}"
   echo "  Namespace: $namespace"
-  echo "  View: peek k8s-watch"
+  echo "  View: sf-peek k8s-watch"
 }
 
 # Watch pods by label
-watch-k8s-label() {
+sf-watch-k8s-label() {
   local label=$1
   local namespace="${K8S_NAMESPACE:-default}"
 
@@ -238,20 +238,20 @@ watch-k8s-label() {
     return 1
   fi
 
-  watch-k8s "${pods[@]}"
+  sf-watch-k8s "${pods[@]}"
 }
 
 # Short aliases
-sw() { spawn-watcher "$@"; }
-wk() { watch-k8s "$@"; }
-wkl() { watch-k8s-label "$@"; }
+sw() { sf-spawn-watcher "$@"; }
+wk() { sf-watch-k8s "$@"; }
+wkl() { sf-watch-k8s-label "$@"; }
 
 # ============================================
 # PROGRESS & CHANGES (human supervisor tools)
 # ============================================
 
 # See agent output / what it's doing
-progress() {
+sf-progress() {
   local name=$1
   local lines=${2:-80}
 
@@ -259,7 +259,7 @@ progress() {
     echo "=== All Windows ==="
     tmux list-windows -F "  [#{window_index}] #{window_name}"
     echo ""
-    echo "Usage: progress <name> [lines]"
+    echo "Usage: sf-progress <name> [lines]"
     return
   fi
 
@@ -311,7 +311,7 @@ _get_repo_from_worktree() {
 }
 
 # Diff agent branch vs main (works from anywhere)
-diff-agent() {
+sf-diff-agent() {
   local name=$1
   local repo=$2
 
@@ -384,10 +384,10 @@ diff-agent() {
 }
 
 # Alias
-da() { diff-agent "$@"; }
+da() { sf-diff-agent "$@"; }
 
 # See code changes in agent worktree (nice colored diff)
-changes() {
+sf-changes() {
   local name=$1
 
   if [ -z "$name" ]; then
@@ -504,7 +504,7 @@ changes() {
 # STATUS & CONTROL
 # ============================================
 
-status() {
+sf-status() {
   echo "╔═══════════════════════════════════════════════════════════════╗"
   echo "║                    SHELLFLOW STATUS                           ║"
   echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -581,14 +581,14 @@ status() {
   echo ""
 
   echo "COMMANDS:"
-  echo "  progress <name>  - see agent output"
-  echo "  changes [name]   - see code changes"
-  echo "  cleanup <name>   - remove agent"
-  echo "  peek <name>      - switch to window"
+  echo "  sf-progress <name>  - see agent output"
+  echo "  sf-changes [name]   - see code changes"
+  echo "  sf-cleanup <name>   - remove agent"
+  echo "  sf-peek <name>      - switch to window"
 }
 
 # Peek at a window
-peek() {
+sf-peek() {
   local name=$1
   if [ -z "$name" ]; then
     echo "Usage: peek <window>"
@@ -598,7 +598,7 @@ peek() {
 }
 
 # Cleanup agent (kill window + remove worktree)
-cleanup() {
+sf-cleanup() {
   local name=$1
   if [ -z "$name" ]; then
     echo "Usage: cleanup <agent-name>"
@@ -628,7 +628,7 @@ cleanup() {
 }
 
 # Cleanup all agents
-cleanup-all() {
+sf-cleanup-all() {
   echo "Cleaning up all agents..."
   local found_any=false
 
@@ -640,7 +640,7 @@ cleanup-all() {
           if [ -d "$agent_dir" ]; then
             found_any=true
             local agent_name=$(basename "$agent_dir")
-            cleanup "$agent_name"
+            sf-cleanup "$agent_name"
           fi
         done
       fi
@@ -684,11 +684,11 @@ cleanup-all() {
 # ALIASES
 # ============================================
 
-alias st='status'
-alias cu='cleanup'
+alias st='sf-status'
+alias cu='sf-cleanup'
 
 # List all agents across all repos (works from anywhere)
-list-agents() {
+sf-list-agents() {
   echo "╔═══════════════════════════════════════════════════════════════╗"
   echo "║  ALL AGENTS                                                   ║"
   echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -746,12 +746,12 @@ list-agents() {
 
   echo ""
   echo "Commands:"
-  echo "  changes <agent>       - see uncommitted changes"
-  echo "  diff-agent <agent>    - see branch vs main"
-  echo "  progress <agent>      - see agent output"
+  echo "  sf-changes <agent>       - see uncommitted changes"
+  echo "  sf-diff-agent <agent>    - see branch vs main"
+  echo "  sf-progress <agent>      - see agent output"
 }
 
-alias la='list-agents'
+alias la='sf-list-agents'
 
 # ============================================
 # TAB COMPLETION
@@ -814,8 +814,8 @@ _shellflow_repos() {
 }
 
 if type compdef &>/dev/null; then
-  compdef _shellflow_windows progress peek
-  compdef _shellflow_agents changes cleanup
+  compdef _shellflow_windows sf-progress sf-peek
+  compdef _shellflow_agents sf-changes sf-cleanup
 fi
 
 # ============================================
@@ -823,7 +823,7 @@ fi
 # ============================================
 
 # Interactive spec builder wizard
-build-specs() {
+sf-build-specs() {
   local script_dir="${SHELLFLOW_DIR:-$HOME/.shellflow}"
   if [ -f "$script_dir/scripts/build-specs.sh" ]; then
     bash "$script_dir/scripts/build-specs.sh" "$@"
@@ -835,7 +835,7 @@ build-specs() {
 }
 
 # Spawn agents from a spec file
-spawn-from-spec() {
+sf-spawn-from-spec() {
   local spec_file=$1
   local only_agent=$2
 
@@ -877,7 +877,7 @@ spawn-from-spec() {
       if [ -n "$current_name" ] && [ -n "$current_task" ]; then
         if [ -z "$only_agent" ] || [ "$only_agent" = "$current_name" ]; then
           echo "Spawning: $current_name ($current_model)"
-          spawn-agent "$current_name" "$current_task" --model "$current_model" --tools "$current_tools"
+          sf-spawn-agent "$current_name" "$current_task" --model "$current_model" --tools "$current_tools"
           echo ""
         fi
       fi
@@ -928,23 +928,23 @@ spawn-from-spec() {
   if [ -n "$current_name" ] && [ -n "$current_task" ]; then
     if [ -z "$only_agent" ] || [ "$only_agent" = "$current_name" ]; then
       echo "Spawning: $current_name ($current_model)"
-      spawn-agent "$current_name" "$current_task" --model "$current_model" --tools "$current_tools"
+      sf-spawn-agent "$current_name" "$current_task" --model "$current_model" --tools "$current_tools"
       echo ""
     fi
   fi
 
-  echo "Done! Use 'status' to see all agents."
+  echo "Done! Use 'sf-status' to see all agents."
 }
 
 # Alias
-alias bs='build-specs'
-alias sfs='spawn-from-spec'
+alias bs='sf-build-specs'
+alias sfs='sf-spawn-from-spec'
 
 # ============================================
 # HELP
 # ============================================
 
-shellflow-help() {
+sf-help() {
   cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════════╗
 ║                      SHELLFLOW COMMANDS                           ║
@@ -956,35 +956,35 @@ shellflow-help() {
 ║   review [file]               Review diff for bugs                ║
 ║                                                                   ║
 ║ SPEC BUILDER (interactive wizard):                                ║
-║   build-specs (bs)            Create agent specs interactively   ║
-║   spawn-from-spec (sfs) <file>  Spawn agents from spec file      ║
+║   sf-build-specs (bs)         Create agent specs interactively   ║
+║   sf-spawn-from-spec (sfs)    Spawn agents from spec file        ║
 ║                                                                   ║
 ║ SPAWN AGENTS (autonomous, non-interactive):                       ║
-║   spawn-agent <name> <task> [--model X] [--tools Y] [--repo R]   ║
+║   sf-spawn-agent <name> <task> [--model X] [--tools Y] [--repo R]║
 ║   sa auth "implement oauth" --model haiku                        ║
 ║   sa api-fix "fix bug" --repo notetaker-api                      ║
 ║                                                                   ║
 ║ MULTI-REPO MODE:                                                  ║
 ║   export SHELLFLOW_PROJECTS_ROOT=~/projects                      ║
-║   spawn-agent auth "task" --repo notetaker-api                   ║
-║   spawn-agent rec "task" --repo notetaker-recorder               ║
+║   sf-spawn-agent auth "task" --repo notetaker-api                ║
+║   sf-spawn-agent rec "task" --repo notetaker-recorder            ║
 ║                                                                   ║
 ║ SPAWN WATCHERS:                                                   ║
-║   spawn-watcher <name> <cmd>  Generic watcher                    ║
-║   watch-k8s pod1 pod2         K8s pod logs (set K8S_NAMESPACE)   ║
-║   watch-k8s-label app=api     K8s pods by label                  ║
+║   sf-spawn-watcher <name> <cmd>  Generic watcher                 ║
+║   sf-watch-k8s pod1 pod2      K8s pod logs (set K8S_NAMESPACE)   ║
+║   sf-watch-k8s-label app=api  K8s pods by label                  ║
 ║                                                                   ║
 ║ MONITOR & CONTROL:                                                ║
-║   status                      Overview of all agents             ║
-║   list-agents (la)            List all agents (works from anywhere)║
-║   progress <name>             See agent output                   ║
-║   changes [name]              See uncommitted changes in worktree║
-║   diff-agent <name> (da)      See branch vs main (committed work)║
-║   peek <name>                 Switch to window                   ║
-║   cleanup <name>              Remove agent + worktree            ║
-║   cleanup-all                 Remove all agents                  ║
+║   sf-status                   Overview of all agents             ║
+║   sf-list-agents (la)         List all agents (works from anywhere)║
+║   sf-progress <name>          See agent output                   ║
+║   sf-changes [name]           See uncommitted changes in worktree║
+║   sf-diff-agent <name> (da)   See branch vs main (committed work)║
+║   sf-peek <name>              Switch to window                   ║
+║   sf-cleanup <name>           Remove agent + worktree            ║
+║   sf-cleanup-all              Remove all agents                  ║
 ╚═══════════════════════════════════════════════════════════════════╝
 EOF
 }
 
-echo "Shellflow loaded. Type 'shellflow-help' for commands."
+echo "Shellflow loaded. Type 'sf-help' for commands."
