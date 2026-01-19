@@ -36,6 +36,7 @@ spawn-agent() {
   local task=""
   local model="sonnet"
   local tools="Read,Glob,Grep,Edit,Write,Bash"
+  local repo=""
 
   # Parse arguments
   while [[ $# -gt 0 ]]; do
@@ -46,6 +47,10 @@ spawn-agent() {
         ;;
       --tools|-t)
         tools="$2"
+        shift 2
+        ;;
+      --repo|-r)
+        repo="$2"
         shift 2
         ;;
       *)
@@ -62,21 +67,67 @@ spawn-agent() {
   task="${task# }"  # trim leading space
 
   if [ -z "$name" ] || [ -z "$task" ]; then
-    echo "Usage: spawn-agent <name> <task> [--model sonnet|haiku|opus] [--tools 'Read,Edit,...']"
+    echo "Usage: spawn-agent <name> <task> [--repo path] [--model sonnet|haiku|opus] [--tools 'Read,Edit,...']"
     echo ""
     echo "Examples:"
     echo "  spawn-agent auth 'implement oauth login'"
     echo "  spawn-agent api 'add rate limiting' --model haiku"
-    echo "  spawn-agent fix 'fix the bug' --tools 'Read,Glob,Grep,Edit'"
+    echo "  spawn-agent fix 'fix the bug' --repo ~/projects/myapp"
+    echo "  spawn-agent api-auth 'add oauth' --repo notetaker-api  # with SHELLFLOW_PROJECTS_ROOT"
     return 1
   fi
 
-  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-  local worktree_path="$repo_root/../worktrees/$name"
+  # Resolve repo path
+  local repo_root
+  local repo_name
+  local worktrees_base
 
-  # Create worktree
-  mkdir -p "$repo_root/../worktrees"
-  git worktree add -b "$name" "$worktree_path" 2>/dev/null || {
+  if [ -n "$repo" ]; then
+    # --repo was specified
+    if [[ "$repo" = /* ]] || [[ "$repo" = ~* ]]; then
+      # Absolute path or home-relative
+      repo_root="${repo/#\~/$HOME}"
+    elif [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+      # Short name with projects root
+      repo_root="$SHELLFLOW_PROJECTS_ROOT/$repo"
+    else
+      # Try as relative path from current directory
+      repo_root="$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
+      if [ -z "$repo_root" ]; then
+        echo "Error: Cannot resolve repo '$repo'"
+        echo "  Either use absolute path or set SHELLFLOW_PROJECTS_ROOT"
+        return 1
+      fi
+    fi
+
+    # Verify it's a git repo
+    if [ ! -d "$repo_root/.git" ]; then
+      echo "Error: '$repo_root' is not a git repository"
+      return 1
+    fi
+
+    repo_name=$(basename "$repo_root")
+    worktrees_base="${SHELLFLOW_PROJECTS_ROOT:-$(dirname "$repo_root")}/worktrees/$repo_name"
+  else
+    # No --repo, use current directory's repo (backwards compatible)
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    repo_name=$(basename "$repo_root")
+
+    # Check if SHELLFLOW_PROJECTS_ROOT is set and repo is under it
+    if [ -n "$SHELLFLOW_PROJECTS_ROOT" ] && [[ "$repo_root" == "$SHELLFLOW_PROJECTS_ROOT"/* ]]; then
+      worktrees_base="$SHELLFLOW_PROJECTS_ROOT/worktrees/$repo_name"
+    else
+      worktrees_base="$repo_root/../worktrees"
+    fi
+  fi
+
+  local worktree_path="$worktrees_base/$name"
+
+  # Create worktree directory structure
+  mkdir -p "$worktrees_base"
+
+  # Create worktree from the target repo
+  git -C "$repo_root" worktree add -b "$name" "$worktree_path" 2>/dev/null || {
     echo "Worktree '$name' may already exist, reusing..."
   }
 
@@ -95,6 +146,7 @@ spawn-agent() {
   tmux send-keys -t "$name" "$claude_cmd" Enter
 
   echo "✓ Agent '$name' spawned (non-interactive, autonomous)"
+  echo "  Repo: $repo_name ($repo_root)"
   echo "  Model: $model"
   echo "  Tools: $tools"
   echo "  Task: $task"
@@ -221,10 +273,46 @@ progress() {
   }
 }
 
+# Helper: find agent worktree path across all repos
+_find_agent_worktree() {
+  local name=$1
+
+  # Check SHELLFLOW_PROJECTS_ROOT first (multi-repo mode)
+  if [ -n "$SHELLFLOW_PROJECTS_ROOT" ] && [ -d "$SHELLFLOW_PROJECTS_ROOT/worktrees" ]; then
+    for repo_dir in "$SHELLFLOW_PROJECTS_ROOT/worktrees"/*/; do
+      if [ -d "$repo_dir/$name" ]; then
+        echo "$repo_dir/$name"
+        return 0
+      fi
+    done
+  fi
+
+  # Check legacy location
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  local legacy_path="$repo_root/../worktrees/$name"
+  if [ -d "$legacy_path" ]; then
+    echo "$legacy_path"
+    return 0
+  fi
+
+  return 1
+}
+
+# Helper: get repo name from agent worktree path
+_get_repo_from_worktree() {
+  local worktree_path=$1
+  if [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+    # Extract repo name from path like /projects/worktrees/REPO/agent
+    local relative="${worktree_path#$SHELLFLOW_PROJECTS_ROOT/worktrees/}"
+    echo "${relative%%/*}"
+  else
+    echo ""
+  fi
+}
+
 # See code changes in agent worktree (nice colored diff)
 changes() {
   local name=$1
-  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
   if [ -z "$name" ]; then
     # Show changes for ALL agents
@@ -233,43 +321,96 @@ changes() {
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo ""
 
-    local worktrees_dir="$repo_root/../worktrees"
-    if [ ! -d "$worktrees_dir" ]; then
-      echo "No worktrees found"
-      return
+    local found_any=false
+
+    # Check SHELLFLOW_PROJECTS_ROOT first (multi-repo mode)
+    if [ -n "$SHELLFLOW_PROJECTS_ROOT" ] && [ -d "$SHELLFLOW_PROJECTS_ROOT/worktrees" ]; then
+      for repo_dir in "$SHELLFLOW_PROJECTS_ROOT/worktrees"/*/; do
+        if [ -d "$repo_dir" ]; then
+          local repo_name=$(basename "$repo_dir")
+
+          for agent_dir in "$repo_dir"/*/; do
+            if [ -d "$agent_dir" ]; then
+              found_any=true
+              local agent_name=$(basename "$agent_dir")
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "AGENT: $agent_name [$repo_name]"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+              local changed=$(git -C "$agent_dir" diff --stat 2>/dev/null)
+              if [ -n "$changed" ]; then
+                echo "$changed"
+                echo ""
+                git -C "$agent_dir" diff --color=always 2>/dev/null | head -100
+              else
+                echo "(no changes)"
+              fi
+              echo ""
+            fi
+          done
+        fi
+      done
     fi
 
-    for agent_dir in "$worktrees_dir"/*/; do
-      if [ -d "$agent_dir" ]; then
-        local agent_name=$(basename "$agent_dir")
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "AGENT: $agent_name"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    # Also check legacy location
+    local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    local legacy_worktrees="$repo_root/../worktrees"
 
-        local changed=$(git -C "$agent_dir" diff --stat 2>/dev/null)
-        if [ -n "$changed" ]; then
-          echo "$changed"
-          echo ""
-          git -C "$agent_dir" diff --color=always 2>/dev/null | head -100
-        else
-          echo "(no changes)"
+    if [ -d "$legacy_worktrees" ]; then
+      local skip_legacy=false
+      if [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+        local resolved_legacy=$(cd "$legacy_worktrees" 2>/dev/null && pwd)
+        local resolved_projects="$SHELLFLOW_PROJECTS_ROOT/worktrees"
+        if [[ "$resolved_legacy" == "$resolved_projects"* ]]; then
+          skip_legacy=true
         fi
-        echo ""
       fi
-    done
+
+      if [ "$skip_legacy" = false ]; then
+        for agent_dir in "$legacy_worktrees"/*/; do
+          if [ -d "$agent_dir" ]; then
+            found_any=true
+            local agent_name=$(basename "$agent_dir")
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "AGENT: $agent_name"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            local changed=$(git -C "$agent_dir" diff --stat 2>/dev/null)
+            if [ -n "$changed" ]; then
+              echo "$changed"
+              echo ""
+              git -C "$agent_dir" diff --color=always 2>/dev/null | head -100
+            else
+              echo "(no changes)"
+            fi
+            echo ""
+          fi
+        done
+      fi
+    fi
+
+    if [ "$found_any" = false ]; then
+      echo "No worktrees found"
+    fi
     return
   fi
 
-  # Show changes for specific agent
-  local worktree_path="$repo_root/../worktrees/$name"
+  # Show changes for specific agent - find it across all repos
+  local worktree_path=$(_find_agent_worktree "$name")
 
-  if [ ! -d "$worktree_path" ]; then
+  if [ -z "$worktree_path" ]; then
     echo "Agent worktree '$name' not found"
     return 1
   fi
 
+  local repo_name=$(_get_repo_from_worktree "$worktree_path")
+  local header="CHANGES: $name"
+  if [ -n "$repo_name" ]; then
+    header="CHANGES: $name [$repo_name]"
+  fi
+
   echo "╔═══════════════════════════════════════════════════════════════╗"
-  echo "║  CHANGES: $name"
+  echo "║  $header"
   echo "╚═══════════════════════════════════════════════════════════════╝"
   echo ""
 
@@ -288,8 +429,6 @@ changes() {
 # ============================================
 
 status() {
-  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-
   echo "╔═══════════════════════════════════════════════════════════════╗"
   echo "║                    SHELLFLOW STATUS                           ║"
   echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -300,20 +439,67 @@ status() {
   echo ""
 
   echo "AGENT WORKTREES:"
-  local worktrees_dir="$repo_root/../worktrees"
-  if [ -d "$worktrees_dir" ]; then
-    for agent_dir in "$worktrees_dir"/*/; do
-      if [ -d "$agent_dir" ]; then
-        local agent_name=$(basename "$agent_dir")
-        local changed=$(git -C "$agent_dir" diff --stat --shortstat 2>/dev/null | tail -1)
-        if [ -n "$changed" ]; then
-          echo "  $agent_name: $changed"
-        else
-          echo "  $agent_name: (no changes)"
-        fi
+  local found_any=false
+
+  # Check SHELLFLOW_PROJECTS_ROOT first (multi-repo mode)
+  if [ -n "$SHELLFLOW_PROJECTS_ROOT" ] && [ -d "$SHELLFLOW_PROJECTS_ROOT/worktrees" ]; then
+    for repo_dir in "$SHELLFLOW_PROJECTS_ROOT/worktrees"/*/; do
+      if [ -d "$repo_dir" ]; then
+        local repo_name=$(basename "$repo_dir")
+        local has_agents=false
+
+        for agent_dir in "$repo_dir"/*/; do
+          if [ -d "$agent_dir" ]; then
+            if [ "$has_agents" = false ]; then
+              echo "  [$repo_name]"
+              has_agents=true
+              found_any=true
+            fi
+            local agent_name=$(basename "$agent_dir")
+            local changed=$(git -C "$agent_dir" diff --stat --shortstat 2>/dev/null | tail -1)
+            if [ -n "$changed" ]; then
+              echo "    $agent_name: $changed"
+            else
+              echo "    $agent_name: (no changes)"
+            fi
+          fi
+        done
       fi
     done
-  else
+  fi
+
+  # Also check current repo's worktrees (backwards compatible)
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  local legacy_worktrees="$repo_root/../worktrees"
+
+  # Only show legacy if not already covered by SHELLFLOW_PROJECTS_ROOT
+  if [ -d "$legacy_worktrees" ]; then
+    local skip_legacy=false
+    if [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+      local resolved_legacy=$(cd "$legacy_worktrees" 2>/dev/null && pwd)
+      local resolved_projects="$SHELLFLOW_PROJECTS_ROOT/worktrees"
+      if [[ "$resolved_legacy" == "$resolved_projects"* ]]; then
+        skip_legacy=true
+      fi
+    fi
+
+    if [ "$skip_legacy" = false ]; then
+      for agent_dir in "$legacy_worktrees"/*/; do
+        if [ -d "$agent_dir" ]; then
+          found_any=true
+          local agent_name=$(basename "$agent_dir")
+          local changed=$(git -C "$agent_dir" diff --stat --shortstat 2>/dev/null | tail -1)
+          if [ -n "$changed" ]; then
+            echo "  $agent_name: $changed"
+          else
+            echo "  $agent_name: (no changes)"
+          fi
+        fi
+      done
+    fi
+  fi
+
+  if [ "$found_any" = false ]; then
     echo "  (no agents)"
   fi
   echo ""
@@ -345,30 +531,76 @@ cleanup() {
 
   tmux kill-window -t "$name" 2>/dev/null
 
-  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-  git worktree remove --force "$repo_root/../worktrees/$name" 2>/dev/null
-  git branch -D "$name" 2>/dev/null
+  # Find the worktree across all repos
+  local worktree_path=$(_find_agent_worktree "$name")
+
+  if [ -n "$worktree_path" ]; then
+    # Get the repo root from the worktree to run git commands
+    local repo_root=$(git -C "$worktree_path" rev-parse --show-toplevel 2>/dev/null)
+    if [ -n "$repo_root" ]; then
+      git -C "$repo_root" worktree remove --force "$worktree_path" 2>/dev/null
+      git -C "$repo_root" branch -D "$name" 2>/dev/null
+    fi
+  else
+    # Fallback to legacy behavior
+    local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    git worktree remove --force "$repo_root/../worktrees/$name" 2>/dev/null
+    git branch -D "$name" 2>/dev/null
+  fi
 
   echo "✓ Cleaned up '$name'"
 }
 
 # Cleanup all agents
 cleanup-all() {
-  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-  local worktrees_dir="$repo_root/../worktrees"
+  echo "Cleaning up all agents..."
+  local found_any=false
 
-  if [ ! -d "$worktrees_dir" ]; then
+  # Check SHELLFLOW_PROJECTS_ROOT first (multi-repo mode)
+  if [ -n "$SHELLFLOW_PROJECTS_ROOT" ] && [ -d "$SHELLFLOW_PROJECTS_ROOT/worktrees" ]; then
+    for repo_dir in "$SHELLFLOW_PROJECTS_ROOT/worktrees"/*/; do
+      if [ -d "$repo_dir" ]; then
+        for agent_dir in "$repo_dir"/*/; do
+          if [ -d "$agent_dir" ]; then
+            found_any=true
+            local agent_name=$(basename "$agent_dir")
+            cleanup "$agent_name"
+          fi
+        done
+      fi
+    done
+  fi
+
+  # Also check legacy location
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  local legacy_worktrees="$repo_root/../worktrees"
+
+  if [ -d "$legacy_worktrees" ]; then
+    local skip_legacy=false
+    if [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+      local resolved_legacy=$(cd "$legacy_worktrees" 2>/dev/null && pwd)
+      local resolved_projects="$SHELLFLOW_PROJECTS_ROOT/worktrees"
+      if [[ "$resolved_legacy" == "$resolved_projects"* ]]; then
+        skip_legacy=true
+      fi
+    fi
+
+    if [ "$skip_legacy" = false ]; then
+      for agent_dir in "$legacy_worktrees"/*/; do
+        if [ -d "$agent_dir" ]; then
+          found_any=true
+          local agent_name=$(basename "$agent_dir")
+          cleanup "$agent_name"
+        fi
+      done
+    fi
+  fi
+
+  if [ "$found_any" = false ]; then
     echo "No agents to clean up"
     return
   fi
 
-  echo "Cleaning up all agents..."
-  for agent_dir in "$worktrees_dir"/*/; do
-    if [ -d "$agent_dir" ]; then
-      local agent_name=$(basename "$agent_dir")
-      cleanup "$agent_name"
-    fi
-  done
   echo "✓ All agents cleaned up"
 }
 
@@ -390,13 +622,53 @@ _shellflow_windows() {
 }
 
 _shellflow_agents() {
-  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
   local agents=()
-  local worktrees_dir="$repo_root/../worktrees"
-  if [ -d "$worktrees_dir" ]; then
-    agents=($(ls "$worktrees_dir" 2>/dev/null))
+
+  # Check SHELLFLOW_PROJECTS_ROOT first (multi-repo mode)
+  if [ -n "$SHELLFLOW_PROJECTS_ROOT" ] && [ -d "$SHELLFLOW_PROJECTS_ROOT/worktrees" ]; then
+    for repo_dir in "$SHELLFLOW_PROJECTS_ROOT/worktrees"/*/; do
+      if [ -d "$repo_dir" ]; then
+        for agent_dir in "$repo_dir"/*/; do
+          if [ -d "$agent_dir" ]; then
+            agents+=($(basename "$agent_dir"))
+          fi
+        done
+      fi
+    done
   fi
+
+  # Also check legacy location
+  local repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  local legacy_worktrees="$repo_root/../worktrees"
+
+  if [ -d "$legacy_worktrees" ]; then
+    local skip_legacy=false
+    if [ -n "$SHELLFLOW_PROJECTS_ROOT" ]; then
+      local resolved_legacy=$(cd "$legacy_worktrees" 2>/dev/null && pwd)
+      local resolved_projects="$SHELLFLOW_PROJECTS_ROOT/worktrees"
+      if [[ "$resolved_legacy" == "$resolved_projects"* ]]; then
+        skip_legacy=true
+      fi
+    fi
+
+    if [ "$skip_legacy" = false ]; then
+      agents+=($(ls "$legacy_worktrees" 2>/dev/null))
+    fi
+  fi
+
   _describe 'agents' agents
+}
+
+_shellflow_repos() {
+  local repos=()
+  if [ -n "$SHELLFLOW_PROJECTS_ROOT" ] && [ -d "$SHELLFLOW_PROJECTS_ROOT" ]; then
+    for dir in "$SHELLFLOW_PROJECTS_ROOT"/*/; do
+      if [ -d "$dir/.git" ]; then
+        repos+=($(basename "$dir"))
+      fi
+    done
+  fi
+  _describe 'repos' repos
 }
 
 if type compdef &>/dev/null; then
@@ -546,8 +818,14 @@ shellflow-help() {
 ║   spawn-from-spec (sfs) <file>  Spawn agents from spec file      ║
 ║                                                                   ║
 ║ SPAWN AGENTS (autonomous, non-interactive):                       ║
-║   spawn-agent <name> <task> [--model X] [--tools Y]              ║
+║   spawn-agent <name> <task> [--model X] [--tools Y] [--repo R]   ║
 ║   sa auth "implement oauth" --model haiku                        ║
+║   sa api-fix "fix bug" --repo notetaker-api                      ║
+║                                                                   ║
+║ MULTI-REPO MODE:                                                  ║
+║   export SHELLFLOW_PROJECTS_ROOT=~/projects                      ║
+║   spawn-agent auth "task" --repo notetaker-api                   ║
+║   spawn-agent rec "task" --repo notetaker-recorder               ║
 ║                                                                   ║
 ║ SPAWN WATCHERS:                                                   ║
 ║   spawn-watcher <name> <cmd>  Generic watcher                    ║
